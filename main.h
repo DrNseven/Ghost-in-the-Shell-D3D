@@ -39,6 +39,17 @@ UINT mStartRegister;
 UINT mVector4fCount;
 //float* pConstantDataFloat;
 
+//gettexture
+LPDIRECT3DBASETEXTURE9 pTexture = nullptr;
+
+//texture crc
+IDirect3DTexture9* CurrentTex = NULL;
+DWORD qCRC;
+int sWidth;
+int sHeight;
+//int dFormat;
+int mStage;
+
 //elementcount
 D3DVERTEXELEMENT9 decl[MAXD3DDECLLENGTH];
 UINT numElements;
@@ -51,11 +62,11 @@ float ScreenCenterY;
 
 //logger
 bool logger = false;
-float countnum = -1;
+float countnum = 1;
 
 //visual settings
 int wallhack = 1;				//wallhack
-int chams = 0;					//chams
+int chams = 1;					//chams
 int esp = 0;					//esp
 
 //aimbot settings
@@ -63,8 +74,9 @@ int aimbot = 1;
 int aimkey = 2;
 DWORD Daimkey = VK_RBUTTON;		//aimkey
 int aimsens = 2;				//aim sensitivity
-int aimfov = 2;					//aim fov in % 
-//int aimheight = 1;			//aim height
+int aimfov = 4;					//aim fov in % 
+int aimheight = 1;				//aim height
+int aimheightxy = 1;			//real value, aimheight * x + x
 
 //autoshoot settings
 int autoshoot = 1;
@@ -100,6 +112,58 @@ void Log(const char *fmt, ...)
 	logfile.close();
 }
 
+DWORD QChecksum(DWORD *pData, int size)
+{
+	if (!pData) { return 0x0; }
+
+	DWORD sum;
+	DWORD tmp;
+	sum = *pData;
+
+	for (int i = 1; i < (size / 4); i++)
+	{
+		tmp = pData[i];
+		tmp = (DWORD)(sum >> 29) + tmp;
+		tmp = (DWORD)(sum >> 17) + tmp;
+		sum = (DWORD)(sum << 3) ^ tmp;
+	}
+
+	return sum;
+}
+
+void doDisassembleShader(LPDIRECT3DDEVICE9 pDevice, char* FileName)
+{
+	std::ofstream oLogFile(FileName, std::ios::trunc);
+
+	if (!oLogFile.is_open())
+		return;
+
+	IDirect3DVertexShader9* pShader;
+
+	pDevice->GetVertexShader(&pShader);
+
+	UINT pSizeOfData;
+
+	pShader->GetFunction(NULL, &pSizeOfData);
+
+	BYTE* pData = new BYTE[pSizeOfData];
+
+	pShader->GetFunction(pData, &pSizeOfData);
+
+	LPD3DXBUFFER bOut;
+
+	D3DXDisassembleShader(reinterpret_cast<DWORD*>(pData), NULL, NULL, &bOut);
+
+	oLogFile << static_cast<char*>(bOut->GetBufferPointer()) << std::endl;
+
+	oLogFile.close();
+
+	delete[] pData;
+
+	pShader->Release();
+
+}
+
 //==========================================================================================================================
 
 //get distance
@@ -112,7 +176,6 @@ float GetDistance(float Xx, float Yy, float xX, float yY)
 struct AimInfo_t
 {
 	float vOutX, vOutY;
-	INT       iTeam;
 	float CrosshairDistance;
 };
 std::vector<AimInfo_t>AimInfo;
@@ -135,13 +198,14 @@ void DrawPoint(LPDIRECT3DDEVICE9 pDevice, int x, int y, int w, int h, D3DCOLOR c
 //   g_MaterialAmbient  c10      1
 //   g_AmbientLight     c11      1
 
-void AddAim(LPDIRECT3DDEVICE9 Device, int iTeam, int aimvecX, int aimvecY, int aimvecZ)
+void AddAim(LPDIRECT3DDEVICE9 Device, int aimvecX, int aimvecY, int aimvecZ)
 {
 	//D3DVIEWPORT9 Viewport;
 	//Device->GetViewport(&Viewport);
+	aimheightxy = ((float)Viewport.Height * -0.02f) + (aimheight * 10);
 
 	D3DXMATRIX Projection, View, World;
-	D3DXVECTOR3 vOut(0, 0, 0), vIn(aimvecX, aimvecY, aimvecZ);//0, 0, 30
+	D3DXVECTOR3 vOut(0, 0, 0), vIn(aimvecX, aimheightxy, aimvecZ); //Y +100head -50chest
 
 	Device->GetVertexShaderConstantF(4, Projection, 4);
 	Device->GetVertexShaderConstantF(0, View, 4);
@@ -152,7 +216,7 @@ void AddAim(LPDIRECT3DDEVICE9 Device, int iTeam, int aimvecX, int aimvecY, int a
 	D3DXMatrixIdentity(&World);
 	D3DXVec3Project(&vOut, &vIn, &Viewport, &Projection, &View, &World);
 
-	AimInfo_t pAimInfo = { static_cast<float>(vOut.x), static_cast<float>(vOut.y), iTeam };
+	AimInfo_t pAimInfo = { static_cast<float>(vOut.x), static_cast<float>(vOut.y) };
 	AimInfo.push_back(pAimInfo);
 }
 
@@ -403,7 +467,7 @@ void SaveSettings()
 	fout << "Aimbot " << aimbot << endl;
 	fout << "Aimkey " << aimkey << endl;
 	fout << "Aimsens " << aimsens << endl;
-	//fout << "Aimheight " << aimheight << endl;
+	fout << "Aimheight " << aimheight << endl;
 	fout << "Aimfov " << aimfov << endl;
 	fout << "Esp " << esp << endl;
 	fout << "Autoshoot " << autoshoot << endl;
@@ -420,7 +484,7 @@ void LoadSettings()
 	fin >> Word >> aimbot;
 	fin >> Word >> aimkey;
 	fin >> Word >> aimsens;
-	//fin >> Word >> aimheight;
+	fin >> Word >> aimheight;
 	fin >> Word >> aimfov;
 	fin >> Word >> esp;
 	fin >> Word >> autoshoot;
@@ -500,7 +564,7 @@ int CheckTabs(int x, int y, int w, int h)
 		{
 			if (GetAsyncKeyState(VK_LBUTTON) & 1)
 			{
-				return 1;
+				//return 1; //disabled mouse selection in menu
 			}
 			return 2;
 		}
@@ -636,12 +700,12 @@ void AddItem(LPDIRECT3DDEVICE9 pDevice, char *text, int &var, char **opt, int Ma
 
 		if (var)
 		{
-			DrawBox(pDevice, PosX, PosY + (Current * 15), 10, 10, Green);
+			//DrawBox(pDevice, PosX, PosY + (Current * 15), 10, 10, Green);
 			ColorText = ItemColorOn;
 		}
 		if (var == 0)
 		{
-			DrawBox(pDevice, PosX, PosY + (Current * 15), 10, 10, Red);
+			//DrawBox(pDevice, PosX, PosY + (Current * 15), 10, 10, Red);
 			ColorText = ItemColorOff;
 		}
 
@@ -674,7 +738,10 @@ void AddItem(LPDIRECT3DDEVICE9 pDevice, char *text, int &var, char **opt, int Ma
 		if (MenuSelection == Current)
 			ColorText = ItemCurrent;
 
+		WriteText(PosX + 11, PosY + (Current * 15) - 1, Black, text);
 		WriteText(PosX + 13, PosY + (Current * 15) - 1, ColorText, text);
+
+		lWriteText(PosX + 146, PosY + (Current * 15) - 1, Black, opt[var]);
 		lWriteText(PosX + 148, PosY + (Current * 15) - 1, ColorText, opt[var]);
 		Current++;
 	}
@@ -684,12 +751,12 @@ void AddItem(LPDIRECT3DDEVICE9 pDevice, char *text, int &var, char **opt, int Ma
 
 // menu part
 char *opt_OnOff[] = { "[OFF]", "[ON]" };
-char *opt_Chams[] = { "[OFF]", "[ON]" };
-char *opt_Teams[] = { "[OFF]", "[ON]" };
+char *opt_Chams[] = { "[OFF]", "[1]", "[2]" };
+char *opt_Esp[] = { "[OFF]", "[Point]", "[Pic]", "[Box]", "[Shader]" };
 char *opt_Keys[] = { "[OFF]", "[Shift]", "[RMouse]", "[LMouse]", "[Ctrl]", "[Alt]", "[Space]", "[X]", "[C]" };
-char *opt_Sensitivity[] = { "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]" };
-//char *opt_Aimheight[] = { "[0]", "[1]", "[2]" };
-char *opt_Aimfov[] = { "[0]", "[10%]", "[20%]", "[30%]", "[40%]", "[50%]", "[60%]", "[70%]", "[80%]", "[90%]" };
+char *opt_Sensitivity[] = { "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]", "10" };
+char *opt_Aimheight[] = { "[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]", "[10]" };
+char *opt_Aimfov[] = { "[0]", "[10%]", "[15%]", "[20%]", "[25%]", "[30%]", "[35%]", "[40%]", "[45%]", "[50%]" };
 char *opt_Autoshoot[] = { "[OFF]", "[OnKeyDown]" };
 
 void BuildMenu(LPDIRECT3DDEVICE9 pDevice)
@@ -700,6 +767,10 @@ void BuildMenu(LPDIRECT3DDEVICE9 pDevice)
 
 		//save settings
 		SaveSettings();
+
+		//Save("wallhack", "wallhack", wallhack, GetFolderFile("palaconfig.ini"));
+
+		//PlaySoundA(GetFolderFile("stuff\\sounds\\menu.wav"), 0, SND_FILENAME | SND_ASYNC | SND_NOSTOP | SND_NODEFAULT);
 	}
 
 	if (Show && pFont)
@@ -714,74 +785,198 @@ void BuildMenu(LPDIRECT3DDEVICE9 pDevice)
 		//DrawPoint(pDevice, 25, 38, 177, 124, TBlack);
 		PrePresent2(pDevice, 48, 38); //draw menu background png
 
-		DrawBox(pDevice, 20, 15, 168, 20, DarkOutline);
-		cWriteText(112, 18, White, "GitS D3D");
-		DrawBox(pDevice, 20, 34, 168, Current * 15, DarkOutline);
+		//DrawBox(pDevice, 20, 15, 168, 20, DarkOutline);
+		//cWriteText(112, 18, White, "GitS D3D");
+		//DrawBox(pDevice, 20, 34, 168, Current * 15, DarkOutline);
 
 		Current = 1;
 		//Category(pDevice, " [D3D]");
 		AddItem(pDevice, " Wallhack", wallhack, opt_OnOff, 1);
-		AddItem(pDevice, " Chams", chams, opt_Chams, 1);
-		AddItem(pDevice, " Esp", esp, opt_Teams, 1);
-		AddItem(pDevice, " Aimbot", aimbot, opt_Teams, 1);
+		AddItem(pDevice, " Chams", chams, opt_Chams, 2);
+		AddItem(pDevice, " Esp", esp, opt_Esp, 2);
+		AddItem(pDevice, " Aimbot", aimbot, opt_OnOff, 1);
 		AddItem(pDevice, " Aimkey", aimkey, opt_Keys, 8);
-		AddItem(pDevice, " Aimsens", aimsens, opt_Sensitivity, 8);
-		//AddItem(pDevice, " Aimheight", aimheight, opt_Aimheight, 2);
+		AddItem(pDevice, " Aimsens", aimsens, opt_Sensitivity, 9);
+		AddItem(pDevice, " Aimheight", aimheight, opt_Aimheight, 10);
 		AddItem(pDevice, " Aimfov", aimfov, opt_Aimfov, 9);
 		AddItem(pDevice, " Autoshoot", autoshoot, opt_Autoshoot, 2);
 
-		//if (MenuSelection >= Current)
-			//MenuSelection = 1;
-
-		if (MenuSelection > 8)
-			MenuSelection = 1;//Current;
+		if (MenuSelection >= Current)
+			MenuSelection = 1;
 
 		if (MenuSelection < 1)
-			MenuSelection = 8;//Current;
+			MenuSelection = 9;//Current;
 	}
 }
 
 //=====================================================================================================================
-/*
-HRESULT GenerateTexture(LPDIRECT3DDEVICE9 Device, IDirect3DTexture9 **ppD3Dtex, DWORD colour32)
+
+//draw fps optimized box, buggy wallhack effect
+bool SHOW = false;
+bool execinstart = true;
+struct Vertex
 {
-	if (FAILED(Device->CreateTexture(8, 8, 1, 0, D3DFMT_A4R4G4B4, D3DPOOL_MANAGED, ppD3Dtex, NULL)))
-		return E_FAIL;
+	float x, y, z, ht;
+	DWORD Color;
+}Va[768];
 
-	WORD colour16 = ((WORD)((colour32 >> 28) & 0xF) << 12)
-		| (WORD)(((colour32 >> 20) & 0xF) << 8)
-		| (WORD)(((colour32 >> 12) & 0xF) << 4)
-		| (WORD)(((colour32 >> 4) & 0xF) << 0);
+int countt = 0;
+void __fastcall addbox(float x, float y, float w, float h, D3DCOLOR Color, LPDIRECT3DDEVICE9 pDevice)
+{
+	int b = countt * 6;
 
-	D3DLOCKED_RECT d3dlr;
-	(*ppD3Dtex)->LockRect(0, &d3dlr, 0, 0);
-	WORD *pDst16 = (WORD*)d3dlr.pBits;
+	Va[b] = { x, y, 0.0f, 0.0f, Color }; b++;
+	Va[b] = { x + w, y , 0.0f, 0.0f, Color }; b++;
+	Va[b] = { x, y + h, 0.0f, 0.0f, Color }; b++;
+	Va[b] = { x, y + h, 0.0f, 0.0f, Color }; b++;
+	Va[b] = { x + w, y , 0.0f, 0.0f, Color }; b++;
+	Va[b] = { x + w, y + h, 0.0f, 0.0f, Color };
 
-	for (int xy = 0; xy < 8 * 8; xy++)
-		*pDst16++ = colour16;
-
-	(*ppD3Dtex)->UnlockRect(0);
-
-	return S_OK;
+	countt++;
+	return;
 }
 
-IDirect3DPixelShader9 *shadRed;
-IDirect3DPixelShader9 *shadGreen;
-//generate shader
-HRESULT GenerateShader(IDirect3DDevice9 *pDevice, IDirect3DPixelShader9 **pShader, float r, float g, float b, float a, bool setzBuf)
+IDirect3DVertexBuffer9* vb_box;
+VOID* pVertices;
+void __fastcall  renderbox(LPDIRECT3DDEVICE9 pDevice)
 {
-	char szShader[256];
-	ID3DXBuffer *pShaderBuf = NULL;
+	if (countt)
+	{
+		pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+		pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+
+		pDevice->SetPixelShader(0); //fix black color
+		pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, true);
+		//setfvf
+		pDevice->SetTexture(0, NULL);
+
+		vb_box->Lock(0, 768 * sizeof(Vertex), &pVertices, 0);
+		memcpy(pVertices, Va, countt * sizeof(Vertex) * 6);
+		vb_box->Unlock();
+
+		pDevice->SetStreamSource(0, vb_box, 0, sizeof(Vertex));
+		pDevice->DrawPrimitive(D3DPT_TRIANGLELIST, 0, countt * 2);
+	}
+
+	countt = 0;
+
+	return;
+}
+
+void __stdcall simple_box(LPDIRECT3DDEVICE9 pDevice)
+{
+	addbox(20, 20, 20, 20, White, pDevice);
+
+	renderbox(pDevice);
+}
+
+//==========================================================================================================================
+
+//draw shader (doesn't work for esp in this game, wtf)
+IDirect3DPixelShader9 *ellipse = NULL;
+
+DWORD deffault_color8[] = { 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff };
+struct VERTEX
+{
+	float x, y, z, rhw;
+	DWORD color;
+	float tu, tv;
+};
+DWORD FVF = D3DFVF_XYZRHW | D3DFVF_TEX1 | D3DFVF_DIFFUSE;
+
+int DX9CreateEllipseShader(LPDIRECT3DDEVICE9 Device)
+{
+	char vers[100];
+	char *strshader = "\
+					  float4 radius: register(c0);\
+					  sampler mytexture;\
+					  struct VS_OUTPUT\
+					  {\
+					  float4 Pos : SV_POSITION;\
+					  float4 Color : COLOR;\
+					  float2 TexCoord : TEXCOORD;\
+					  };\
+					  float4 PS(VS_OUTPUT input) : SV_TARGET\
+					  {\
+					  if( ( (input.TexCoord[0]-0.5)*(input.TexCoord[0]-0.5) + (input.TexCoord[1]-0.5)*(input.TexCoord[1]-0.5) <= 0.5*0.5) &&\
+					  ( (input.TexCoord[0]-0.5)*(input.TexCoord[0]-0.5) + (input.TexCoord[1]-0.5)*(input.TexCoord[1]-0.5) >= radius[0]*radius[0]) )\
+					  return input.Color;\
+					  else return float4(0,0,0,0);\
+					  };";
+
 	D3DCAPS9 caps;
-	pDevice->GetDeviceCaps(&caps);
-	int PXSHVER1 = (D3DSHADER_VERSION_MAJOR(caps.PixelShaderVersion));
-	int PXSHVER2 = (D3DSHADER_VERSION_MINOR(caps.PixelShaderVersion));
-	if (setzBuf)
-		sprintf_s(szShader, "ps.%d.%d\ndef c0, %f, %f, %f, %f\nmov oC0,c0\nmov oDepth, c0.x", PXSHVER1, PXSHVER2, r, g, b, a);
-	else
-		sprintf_s(szShader, "ps.%d.%d\ndef c1, %f, %f, %f, %f\nmov oC1,c1", PXSHVER1, PXSHVER2, r, g, b, a);
-	D3DXAssembleShader(szShader, sizeof(szShader), NULL, NULL, 0, &pShaderBuf, NULL);
-	if (FAILED(pDevice->CreatePixelShader((const DWORD*)pShaderBuf->GetBufferPointer(), pShader)))return E_FAIL;
-	return S_OK;
+	Device->GetDeviceCaps(&caps);
+	UINT V1 = D3DSHADER_VERSION_MAJOR(caps.PixelShaderVersion);
+	UINT V2 = D3DSHADER_VERSION_MINOR(caps.PixelShaderVersion);
+	sprintf_s(vers, "ps_%d_%d", V1, V2);
+	//sprintf(vers, "ps_%d_%d", V1, V2);
+	LPD3DXBUFFER pshader;
+	D3DXCompileShader(strshader, strlen(strshader), 0, 0, "PS", vers, 0, &pshader, 0, 0);
+	if (pshader == NULL)
+	{
+		//MessageBoxA(0, "pshader == NULL", 0, 0);
+		return 1;
+	}
+	Device->CreatePixelShader((DWORD*)pshader->GetBufferPointer(), (IDirect3DPixelShader9**)&ellipse);
+	if (!ellipse)
+	{
+		//MessageBoxA(0, "ellipseshader == NULL", 0, 0);
+		return 2;
+	}
+
+	memset(strshader, 0, strlen(strshader));
+	pshader->Release();
+	return 0;
 }
-*/
+
+IDirect3DVertexBuffer9 *vb = 0;
+IDirect3DIndexBuffer9 *ib = 0;
+int DX9DrawEllipse(LPDIRECT3DDEVICE9 Device, float x, float y, float w, float h, float linew, DWORD *color)
+{
+	if (!Device)return 1;
+	//static IDirect3DVertexBuffer9 *vb = 0;
+	//static IDirect3DIndexBuffer9 *ib = 0;
+	static IDirect3DSurface9 *surface = 0;
+	static IDirect3DTexture9 *pstexture = 0;
+
+	//Device->CreateVertexBuffer(sizeof(VERTEX) * 4, D3DUSAGE_WRITEONLY, FVF, D3DPOOL_MANAGED, &vb, NULL);
+	//Device->CreateVertexBuffer(sizeof(VERTEX) * 4, D3DUSAGE_WRITEONLY, FVF, D3DPOOL_DEFAULT, &vb, NULL);
+	if (!vb) { MessageBoxA(0, "DrawEllipse error vb", 0, 0); return 2; }
+
+	//Device->CreateIndexBuffer((3 * 2) * 2, 0, D3DFMT_INDEX16, D3DPOOL_MANAGED, &ib, NULL);
+	//Device->CreateIndexBuffer((3 * 2) * 2, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &ib, NULL);
+	if (!ib) { MessageBoxA(0, "DrawEllipse error ib", 0, 0); return 3; }
+
+	if (!color)color = deffault_color8;
+	float tu = 0, tv = 0;
+	float tw = 1.0, th = 1.0;
+	VERTEX v[4] = { { x, y, 0, 1, color[0], tu, tv },{ x + w, y, 0, 1, color[1], tu + tw, tv },{ x + w, y + h, 0, 1, color[2], tu + tw, tv + th },{ x, y + h, 0, 1, color[3], tu, tv + th } };
+	WORD i[2 * 3] = { 0, 1, 2, 2, 3, 0 };
+	void *p;
+	vb->Lock(0, sizeof(v), &p, 0);
+	memcpy(p, v, sizeof(v));
+	vb->Unlock();
+
+	ib->Lock(0, sizeof(i), &p, 0);
+	memcpy(p, i, sizeof(i));
+	ib->Unlock();
+
+	float radius[4] = { 0, w, h, 0 };
+
+	radius[0] = (linew) / w;
+	if (radius[0]>0.5)radius[0] = 0.5;
+	radius[0] = 0.5 - radius[0];
+
+	Device->SetPixelShaderConstantF(0, radius, 1);
+	Device->SetFVF(FVF);
+	Device->SetTexture(0, 0);
+	Device->SetPixelShader((IDirect3DPixelShader9*)ellipse);
+	Device->SetVertexShader(0);
+	Device->SetStreamSource(0, vb, 0, sizeof(VERTEX));
+	Device->SetIndices(ib);
+	Device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+	//if (vb != NULL) { vb->Release(); }
+	//if (ib != NULL) { ib->Release(); }
+
+	return 0;
+};

@@ -1,5 +1,5 @@
 //Ghost in the Shell : Stand Alone Complex - First Assault Online
-//D3D Multihack alpha 0.2
+//D3D Multihack beta 0.4
 
 /*
 How to compile:
@@ -59,41 +59,145 @@ SetViewport SetViewport_orig = 0;
 
 //=====================================================================================================================
 
+//this may or may not be complete
+#define models ((Stride == 12 || Stride == 72 || Stride == 80) && \
+(mVector4fCount == 99 || mVector4fCount == 101))
+
+//#define models ((Stride == 12 || Stride == 72 || Stride == 80) && \
+//(numElements == 8 || numElements == 9 || numElements == 10) && \
+//(mVector4fCount == 99 || mVector4fCount == 101))
+
+//the eyes to aim at
+#define eyes (Stride == 32 && NumVertices == 4 && primCount == 2 && numElements == 4 && decl->Type == 2 && vSize == 536 && pSize == 872 && mStartRegister == 0 && mVector4fCount == 9) //glowing light around the eyes
+
 HRESULT APIENTRY DrawIndexedPrimitive_hook(IDirect3DDevice9* pDevice, D3DPRIMITIVETYPE Type, INT BaseVertexIndex, UINT MinVertexIndex, UINT NumVertices, UINT startIndex, UINT primCount)
 {
 	//wallhack, chams
 	if (wallhack == 1 || chams == 1)
-		if (numElements == 9) //models
+		if (models||eyes) //models, eyes
 		{
 			//wallhack 
 			pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
 
-			//chams
+			//chams 
 			if (chams == 1)
 			{
+				float vals[] =
+				{
+					//340
+					((pSize*vSize >> 24) & (DWORD)2) / 1.0f,
+					((pSize*vSize >> 16) & (DWORD)2) / 1.0f,
+					((pSize*vSize >> 8) & (DWORD)2) / 1.0f,
+					1.0f
+				};
+				//pDevice->SetPixelShaderConstantF(7, vals, 1);
+				pDevice->SetPixelShaderConstantF(18, vals, 2);//8, 9, 13, 14
+			}
+
+			//chams 
+			if (chams == 2)
+			{
 				float vals[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
-				pDevice->SetPixelShaderConstantF(18, vals, 1);
+				//pDevice->SetPixelShaderConstantF(7, vals, 1);
+				pDevice->SetPixelShaderConstantF(18, vals, 2);
 			}
 
 			DrawIndexedPrimitive_orig(pDevice, Type, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
 
 			if (chams == 1)
 			{
+				float vals[] =
+				{
+					((pSize*vSize >> 24) & (DWORD)2) / 1.0f,
+					((pSize*vSize >> 16) & (DWORD)2) / 1.0f,
+					((pSize*vSize >> 8) & (DWORD)2) / 1.0f,
+					1.0f
+				};
+				//pDevice->SetPixelShaderConstantF(7, vals, 1);
+				pDevice->SetPixelShaderConstantF(18, vals, 2);
+			}
+
+			if (chams == 2)
+			{
 				float vals[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
-				pDevice->SetPixelShaderConstantF(18, vals, 1);
+				//pDevice->SetPixelShaderConstantF(7, vals, 1);
+				pDevice->SetPixelShaderConstantF(18, vals, 2);
 			}
 
 			pDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
 		}
 
-	//aimbot, esp for e
-	if (aimbot == 1 || esp == 1)
-		//Stride == 12 && NumVertices == 4 && primCount == 2 && decl->Type == 2 && numElements == 4 && vSize == 680 && pSize == 872 && mStartRegister == 0 && mVector4fCount == 12
-		//if (Stride == 12 && numElements == 4 && vSize == 680 && pSize == 872 && mVector4fCount == 12)
-		if (Stride == 12 && numElements == 4 && mVector4fCount == 12)
+	//aimbot, esp
+	if (aimbot == 1 || esp > 0)
+		if (eyes)
 		{
-			AddAim(pDevice, 1, 0, 0, 30); //head
+			AddAim(pDevice, 0, aimheightxy, 0);
 		}
+
+
+	/*
+	//get ptex (may reduce fps, only use if needed)
+	HRESULT hr;
+	if (models|| eyes) //reduce fps loss1
+	{
+		hr = pDevice->GetTexture(0, &pTexture);
+		if (FAILED(hr)) { goto out; }
+		if (pTexture != nullptr)
+		{
+			CurrentTex = static_cast<IDirect3DTexture9*>(pTexture);
+
+			D3DSURFACE_DESC surfaceDesc;
+
+			if (FAILED(CurrentTex->GetLevelDesc(0, &surfaceDesc)))
+			{
+				//Log("surfaceDesc failed");
+				goto out;
+			}
+
+			if (SUCCEEDED(CurrentTex->GetLevelDesc(0, &surfaceDesc)))//
+				if (surfaceDesc.Pool == D3DPOOL_MANAGED && CurrentTex->GetType() == D3DRTYPE_TEXTURE) //reduce fps loss2
+				{
+					sWidth = surfaceDesc.Width;
+					sHeight = surfaceDesc.Height;
+					//dFormat = surfaceDesc.Format;
+
+					D3DLOCKED_RECT pLockedRect;
+
+					if (CurrentTex->LockRect(0, &pLockedRect, NULL, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT | D3DLOCK_NOSYSLOCK) == S_OK)
+						//pCurrentTex->LockRect(0, &pLockedRect, NULL, D3DLOCK_NOOVERWRITE | D3DLOCK_READONLY);
+						//pCurrentTex->LockRect(0, &pLockedRect, NULL, D3DLOCK_NOOVERWRITE | D3DLOCK_NOSYSLOCK | D3DLOCK_DONOTWAIT | D3DLOCK_READONLY);
+
+						if (pLockedRect.pBits != NULL)
+						{
+							// get crc from the algorithm
+							qCRC = QChecksum((DWORD*)pLockedRect.pBits, 12);// pLockedRect.Pitch);
+							//pCurrentTex->UnlockRect(0);
+						}
+					CurrentTex->UnlockRect(0);
+				}
+
+		out:
+			//uh, should CurrentTex be released
+			if (pTexture != NULL) { pTexture->Release(); pTexture = NULL; }
+		}
+		if (pTexture != NULL) { pTexture->Release(); pTexture = NULL; }
+	}
+	*/
+	
+	//test if eyes are green, if not then update broke it
+	//if(eyes)
+		//pDevice->SetPixelShader(shadGreen);
+
+	//log the eyes
+	//if (eyes)
+	//if (GetAsyncKeyState(VK_F10) & 1)
+		//Log("qCRC == %x && Stride == %d && NumVertices == %d && primCount == %d && numElements == %d && decl->Type == %d && vSize == %d && pSize == %d && mStartRegister == %d && mVector4fCount == %d && sWidth == %d && sHeight == %d", qCRC, Stride, NumVertices, primCount, numElements, decl->Type, vSize, pSize, mStartRegister, mVector4fCount, sWidth, sHeight);
+	//qCRC == 377503c2 && Stride == 32 && NumVertices == 4 && primCount == 2 && numElements == 4 && decl->Type == 2 && vSize == 536 && pSize == 872 && mStartRegister == 0 && mVector4fCount == 9 && sWidth == 256 && sHeight == 256
+
+	//log shader of eyes
+	//if (eyes)
+	//if (GetAsyncKeyState(VK_F10) & 1)
+	//doDisassembleShader(pDevice, GetDirectoryFile("shader1.txt"));
 
 
 	//small bruteforce logger
@@ -108,7 +212,7 @@ HRESULT APIENTRY DrawIndexedPrimitive_hook(IDirect3DDevice9* pDevice, D3DPRIMITI
 			countnum = -1;
 		if (countnum == numElements)
 			if (GetAsyncKeyState('I') & 1) //press I to log to log.txt
-				Log("Stride == %d && NumVertices == %d && primCount == %d && numElements == %d && decl->Type == %d && vSize == %d && pSize == %d && mStartRegister == %d && mVector4fCount == %d && startIndex == %d", Stride, NumVertices, primCount, numElements, decl->Type, vSize, pSize, mStartRegister, mVector4fCount, startIndex);
+				Log("qCRC == %x && Stride == %d && NumVertices == %d && primCount == %d && numElements == %d && decl->Type == %d && vSize == %d && pSize == %d && mStartRegister == %d && mVector4fCount == %d && sWidth == %d && sHeight == %d", qCRC, Stride, NumVertices, primCount, numElements, decl->Type, vSize, pSize, mStartRegister, mVector4fCount, sWidth, sHeight);
 		if (countnum == numElements)
 		{
 			pDevice->SetPixelShader(NULL);
@@ -131,6 +235,18 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 	if (DoInit)
 	{
 		LoadSettings();
+
+		//generate circle shader
+		//DX9CreateEllipseShader(pDevice);
+
+		//circle vb
+		//pDevice->CreateVertexBuffer(sizeof(VERTEX) * 4, D3DUSAGE_WRITEONLY, FVF, D3DPOOL_DEFAULT, &vb, NULL);
+
+		//circle ib
+		//pDevice->CreateIndexBuffer((3 * 2) * 2, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &ib, NULL);
+
+		//init fps optimized box
+		//pDevice->CreateVertexBuffer(768 * sizeof(Vertex), D3DUSAGE_WRITEONLY, D3DFVF_XYZ | D3DFVF_DIFFUSE, D3DPOOL_DEFAULT, &vb_box, NULL);
 
 		DoInit = false;
 	}
@@ -163,21 +279,42 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 	}
 
 	//esp part 2
-	if (esp == 1)
-		if (AimInfo.size() != NULL)
+	if (esp > 0 && AimInfo.size() != NULL)
+	{
+		for (unsigned int i = 0; i < AimInfo.size(); i++)
 		{
-			for (unsigned int i = 0; i < AimInfo.size(); i++)
+			if (esp == 1 && /*AimInfo[i].iTeam == 1 && */AimInfo[i].vOutX > 1 && AimInfo[i].vOutY > 1)
 			{
-				if (AimInfo[i].iTeam == 1 && AimInfo[i].vOutX > 1 && AimInfo[i].vOutY > 1)
-				{
-					//drawpic
-					PrePresent(pDevice, (int)AimInfo[i].vOutX - 32, (int)AimInfo[i].vOutY - 20);
-					//DrawPoint(pDevice, (int)AimInfo[i].vOutX, (int)AimInfo[i].vOutY, 4, 4, D3DCOLOR_ARGB(255, 0, 255, 0));
-					//DrawBorder(pDevice, (int)AimInfo[i].vOutX - 9, (int)AimInfo[i].vOutY, 20, 30, 1, D3DCOLOR_ARGB(0, 255, 0, 0));
-					//DrawString(pFont, (int)AimInfo[i].vOutX - 9, (int)AimInfo[i].vOutY, D3DCOLOR_ARGB(255, 255, 0, 0), "o");
-				}
+				//draw aimpoint
+				DrawPoint(pDevice, (int)AimInfo[i].vOutX, (int)AimInfo[i].vOutY, 4, 4, D3DCOLOR_ARGB(255, 0, 255, 0)); //draw aimpoint
 			}
+
+			if (esp == 2 && /*AimInfo[i].iTeam == 1 && */AimInfo[i].vOutX > 1 && AimInfo[i].vOutY > 1)
+			{
+				//draw pic
+				PrePresent(pDevice, (int)AimInfo[i].vOutX - 32, (int)AimInfo[i].vOutY - 20);
+			}
+			/*
+			if (esp == 3 && AimInfo[i].vOutX > 1 && AimInfo[i].vOutY > 1)
+			{
+				//draw box 
+				addbox(AimInfo[i].vOutX-9, AimInfo[i].vOutY, 20, 2, White, pDevice); //w ->, h = ^
+				addbox(AimInfo[i].vOutX-9, AimInfo[i].vOutY+20, 20, 2, White, pDevice);
+				addbox(AimInfo[i].vOutX-9, AimInfo[i].vOutY, 2, 20, White, pDevice);
+				addbox(AimInfo[i].vOutX+9, AimInfo[i].vOutY, 2, 20, White, pDevice);//+18-9=+9
+				renderbox(pDevice);
+				//DrawBorder(pDevice, (int)AimInfo[i].vOutX - 9, (int)AimInfo[i].vOutY, 20, 30, 1, D3DCOLOR_ARGB(0, 255, 0, 0));
+			}
+
+			if (esp == 4 && AimInfo[i].vOutX > 1 && AimInfo[i].vOutY > 1)
+			{
+				DWORD col[4] = { 0xffffff00, 0xffffff00, 0xffffff00, 0xffffff00 };//yellow
+				DX9DrawEllipse(pDevice, AimInfo[i].vOutX-9, AimInfo[i].vOutY - 10, 25, 25, 6, &col[4]);
+				//DrawString(pFont, (int)AimInfo[i].vOutX - 9, (int)AimInfo[i].vOutY, D3DCOLOR_ARGB(255, 255, 0, 0), "[]");
+			}
+			*/
 		}
+	}
 
 	//aimbot part 2
 	if (aimbot == 1 && AimInfo.size() != NULL && GetAsyncKeyState(Daimkey))
@@ -189,8 +326,8 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 		for (unsigned int i = 0; i < AimInfo.size(); i++)
 		{
 			//aimfov
-			float radiusx = (aimfov*5.0f) * (ScreenCenterX / 100);
-			float radiusy = (aimfov*5.0f) * (ScreenCenterY / 100);
+			float radiusx = (aimfov*2.5f) * (ScreenCenterX / 100);
+			float radiusy = (aimfov*2.5f) * (ScreenCenterY / 100);
 
 			if (aimfov == 0)
 			{
@@ -226,7 +363,7 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 			DistY /= (1 + aimsens);
 
 			//aim
-			if (GetAsyncKeyState(Daimkey) & 0x8000)
+			//if (GetAsyncKeyState(Daimkey) & 0x8000)
 				mouse_event(MOUSEEVENTF_MOVE, (int)DistX, (int)DistY, 0, NULL);
 
 			//autoshoot on
@@ -253,7 +390,7 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 		}
 	}
 
-	//logger
+	//draw logger
 	if ((GetAsyncKeyState(VK_MENU)) && (GetAsyncKeyState(VK_CONTROL)) && (GetAsyncKeyState(0x4C) & 1)) //ALT + CTRL + L toggles logger
 		logger = !logger;
 	if (pFont && logger) //&& countnum >= 0)
@@ -265,6 +402,9 @@ HRESULT APIENTRY EndScene_hook(IDirect3DDevice9* pDevice)
 		DrawString(pFont, 220, 120, Yellow, "hold O to -");
 		DrawString(pFont, 220, 130, Green, "press I to log");
 	}
+
+	//DWORD col[4] = { 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff };
+	//DX9DrawEllipse(pDevice, 150, 150 - 10, 25, 25, 6, &col[4]);
 
 	return EndScene_orig(pDevice);
 }
@@ -351,6 +491,8 @@ HRESULT APIENTRY SetVertexDeclaration_hook(IDirect3DDevice9* pDevice, IDirect3DV
 
 HRESULT APIENTRY SetTexture_hook(IDirect3DDevice9* pDevice, DWORD Sampler, IDirect3DBaseTexture9 *pTexture)
 {
+	mStage = Sampler;
+
 	return SetTexture_orig(pDevice, Sampler, pTexture);
 }
 
